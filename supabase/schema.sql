@@ -64,3 +64,34 @@ insert into kakeibo_budgets (category_name, amount) values
   ('医療費', 5000),
   ('交通費', 8000)
 on conflict (category_name) do nothing;
+
+-- ============================================================
+-- 追記（2026-08 update）: 既存プロジェクトにも安全に再実行できます
+-- ============================================================
+
+-- 支出：お店の名前とメモを分けて記録
+alter table kakeibo_expenses add column if not exists store text;
+
+-- 月次収支（収入・固定費）
+create table if not exists kakeibo_budget_items (
+  id bigint generated always as identity primary key,
+  month text not null,                          -- 'YYYY-MM'
+  type text not null check (type in ('income','fixed')),
+  label text not null,
+  amount integer not null default 0,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists kakeibo_budget_items_month_idx on kakeibo_budget_items (month);
+
+alter table kakeibo_budget_items enable row level security;
+-- ポリシーは作らない（service_role / secret key だけがRLSをバイパスしてアクセスできる）
+
+-- ============================================================
+-- 追記（2026-08 update その2）: 支出を固定費/変動費に分け、
+-- 手残りの内訳（現金・銀行口座など）も管理できるようにする
+-- ============================================================
+alter table kakeibo_budget_items drop constraint if exists kakeibo_budget_items_type_check;
+alter table kakeibo_budget_items add constraint kakeibo_budget_items_type_check
+  check (type in ('income','fixed','variable','asset'));
+
