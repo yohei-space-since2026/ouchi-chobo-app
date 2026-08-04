@@ -157,21 +157,24 @@ export default function Home() {
   const trendChart = useRef(null);
 
   async function loadCore() {
-    try {
-      const [catRes, methodRes, budgetRes, registrantRes] = await Promise.all([
-        api('/api/categories'),
-        api('/api/methods'),
-        api('/api/budgets'),
-        api('/api/registrants')
-      ]);
-      setCategories(catRes.categories || []);
-      setMethods((methodRes.methods || []).map((m) => m.name));
-      setBudgets(budgetRes.budgets || {});
-      setRegistrants(registrantRes.registrants || []);
+    const [catRes, methodRes, budgetRes, registrantRes] = await Promise.allSettled([
+      api('/api/categories'),
+      api('/api/methods'),
+      api('/api/budgets'),
+      api('/api/registrants')
+    ]);
+    // どれか1つのAPIが失敗しても、成功した分は反映する（1つの不調で全データが止まらないように）
+    if (catRes.status === 'fulfilled') setCategories(catRes.value.categories || []);
+    if (methodRes.status === 'fulfilled') setMethods((methodRes.value.methods || []).map((m) => m.name));
+    if (budgetRes.status === 'fulfilled') setBudgets(budgetRes.value.budgets || {});
+    if (registrantRes.status === 'fulfilled') setRegistrants(registrantRes.value.registrants || []);
+
+    const anyFailed = [catRes, methodRes, budgetRes, registrantRes].some((r) => r.status === 'rejected');
+    if (anyFailed) {
+      setErrorMsg('一部のデータの読み込みに失敗しました。通信状況を確認してください。');
+    } else {
       setErrorMsg('');
       setSyncedAt(new Date());
-    } catch {
-      setErrorMsg('データの読み込みに失敗しました。通信状況を確認してください。');
     }
   }
   async function loadExpenses(offset) {
@@ -240,13 +243,17 @@ export default function Home() {
     }
   }, [registrantNames, who]);
 
+  // 8秒ごとのポーリングでcategories/budgetsの参照が変わっても、中身が同じなら予算の入力途中をリセットしないようにする
+  const categoryNamesKey = useMemo(() => categories.map((c) => c.name).join(','), [categories]);
+  const budgetsKey = useMemo(() => JSON.stringify(budgets), [budgets]);
   useEffect(() => {
     if (tab === 'settings') {
       const draft = {};
       categories.forEach((c) => { draft[c.name] = budgets[c.name] || 0; });
       setBudgetDraft(draft);
     }
-  }, [tab, categories, budgets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, categoryNamesKey, budgetsKey]);
 
   useEffect(() => {
     if (tab === 'charts') { renderDonut(); loadTrend(); }
