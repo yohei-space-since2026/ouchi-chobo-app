@@ -972,6 +972,7 @@ export default function Home() {
                   />
                 </div>
               ))}
+              <div className="budget-total-row">合計：{yen(Object.values(budgetDraft).reduce((s, v) => s + (Number(v) || 0), 0))}</div>
               <button className="btn-primary" onClick={saveBudgets}>予算を保存</button>
               <div className="save-note">{budgetNote}</div>
             </div>

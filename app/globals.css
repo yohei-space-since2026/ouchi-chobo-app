@@ -180,6 +180,7 @@ input[type="color"]{ padding:2px; height:38px; width:46px; flex-shrink:0; cursor
 .budget-input-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px dashed var(--rule); }
 .budget-input-row:last-child{ border-bottom:none; }
 .budget-input-row .cat-name{ width:88px; flex-shrink:0; font-size:13px;}
+.budget-total-row{ display:flex; justify-content:flex-end; gap:8px; padding:10px 0 4px; font-size:14px; font-weight:800; color:var(--ink); border-top:2px solid var(--gold); margin-top:2px; }
 .save-note{ font-size:11px; color:var(--good); text-align:center; margin-top:8px; min-height:14px;}
 
 .manage-row{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dashed var(--rule); background:#FFFBF6; }

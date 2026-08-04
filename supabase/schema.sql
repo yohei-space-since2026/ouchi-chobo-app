@@ -104,9 +104,5 @@ create table if not exists kakeibo_registrants (
 );
 alter table kakeibo_registrants enable row level security;
 -- ポリシーは作らない（service_role / secret key だけがRLSをバイパスしてアクセスできる）
-
-insert into kakeibo_registrants (name, sort_order) values
-  ('自分', 1),
-  ('妻', 2)
-on conflict (name) do nothing;
+-- 初期データは投入しない。登録者は「設定」画面から自由に追加してください。
 
