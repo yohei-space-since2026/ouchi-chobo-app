@@ -375,11 +375,17 @@ export default function Home() {
 
   async function saveBudgets() {
     try {
-      await api('/api/budgets', { method: 'PUT', body: JSON.stringify({ budgets: budgetDraft }) });
-      setBudgets(budgetDraft);
+      // 現在存在するカテゴリのぶんだけ送る（削除済みカテゴリの古い値が紛れて失敗するのを防ぐ）＋ 空欄は0として保存
+      const payload = {};
+      categories.forEach((c) => { payload[c.name] = Number(budgetDraft[c.name]) || 0; });
+      await api('/api/budgets', { method: 'PUT', body: JSON.stringify({ budgets: payload }) });
+      setBudgets(payload);
+      setBudgetDraft(payload);
       setBudgetNote('保存しました。');
       setTimeout(() => setBudgetNote(''), 2500);
-    } catch { setBudgetNote('保存に失敗しました。'); }
+    } catch (err) {
+      setBudgetNote('保存に失敗しました：' + (err?.message || '不明なエラー'));
+    }
   }
   async function addCategory() {
     if (!newCatName.trim()) return;
@@ -952,7 +958,18 @@ export default function Home() {
               {categories.map((c) => (
                 <div className="budget-input-row" key={c.name}>
                   <div className="cat-name"><span className="cat-mark" style={{ background: c.color }} />{c.name}</div>
-                  <input type="number" min="0" step="1000" value={budgetDraft[c.name] ?? 0} onChange={(e) => setBudgetDraft({ ...budgetDraft, [c.name]: Number(e.target.value) || 0 })} />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0"
+                    value={budgetDraft[c.name] ? String(budgetDraft[c.name]) : ''}
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/[^0-9]/g, '').slice(0, 9); // 億超えの誤入力を防止
+                      setBudgetDraft({ ...budgetDraft, [c.name]: digits === '' ? 0 : Number(digits) });
+                    }}
+                  />
                 </div>
               ))}
               <button className="btn-primary" onClick={saveBudgets}>予算を保存</button>

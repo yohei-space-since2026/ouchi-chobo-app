@@ -15,10 +15,12 @@ export async function PUT(request) {
   if (!budgets || typeof budgets !== 'object') {
     return NextResponse.json({ error: 'budgets object is required' }, { status: 400 });
   }
-  const rows = Object.entries(budgets).map(([category_name, amount]) => ({
-    category_name,
-    amount: Math.round(Number(amount)) || 0
-  }));
+  const rows = Object.entries(budgets).map(([category_name, amount]) => {
+    let n = Math.round(Number(amount));
+    if (!Number.isFinite(n) || n < 0) n = 0;
+    if (n > 999999999) n = 999999999; // Postgres integer範囲を超えないように上限を設ける
+    return { category_name, amount: n };
+  });
   const { error } = await supabaseAdmin().from('kakeibo_budgets').upsert(rows, { onConflict: 'category_name' });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
