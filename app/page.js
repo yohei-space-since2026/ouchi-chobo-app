@@ -378,7 +378,7 @@ export default function Home() {
       // 現在存在するカテゴリのぶんだけ送る（削除済みカテゴリの古い値が紛れて失敗するのを防ぐ）＋ 空欄は0として保存
       const payload = {};
       categories.forEach((c) => { payload[c.name] = Number(budgetDraft[c.name]) || 0; });
-      await api('/api/budgets', { method: 'PUT', body: JSON.stringify({ budgets: payload }) });
+      await api('/api/budgets', { method: 'POST', body: JSON.stringify({ budgets: payload }) });
       setBudgets(payload);
       setBudgetDraft(payload);
       setBudgetNote('保存しました。');

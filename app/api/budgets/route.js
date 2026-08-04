@@ -9,7 +9,7 @@ export async function GET() {
   return NextResponse.json({ budgets });
 }
 
-export async function PUT(request) {
+export async function POST(request) {
   const body = await request.json().catch(() => ({}));
   const budgets = body.budgets; // { categoryName: amount, ... }
   if (!budgets || typeof budgets !== 'object') {
