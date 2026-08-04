@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-const WHO = ['自分', '妻'];
 const HEADER_CATEGORIES = ['食費', '外食費', '娯楽費'];
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -53,6 +52,49 @@ async function api(path, options) {
   return data;
 }
 
+// ドラッグ&ドロップ（マウス/タッチ共通のPointer Eventsで実装）で並び替えるための小さなフック
+function useDragReorder(items, keyOf, onCommit) {
+  const containerRef = useRef(null);
+  const dragFromRef = useRef(null);
+  const [order, setOrder] = useState(items);
+  const [dragIndex, setDragIndex] = useState(null);
+
+  useEffect(() => { if (dragIndex === null) setOrder(items); }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function onPointerDown(e, index) {
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    dragFromRef.current = index;
+    setDragIndex(index);
+  }
+  function onPointerMove(e) {
+    if (dragFromRef.current === null || !containerRef.current) return;
+    const rows = Array.from(containerRef.current.children);
+    const y = e.clientY;
+    let targetIndex = dragFromRef.current;
+    rows.forEach((row, i) => {
+      const rect = row.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom) targetIndex = i;
+    });
+    if (targetIndex !== dragFromRef.current) {
+      setOrder((prev) => {
+        const next = [...prev];
+        const [moved] = next.splice(dragFromRef.current, 1);
+        next.splice(targetIndex, 0, moved);
+        return next;
+      });
+      dragFromRef.current = targetIndex;
+      setDragIndex(targetIndex);
+    }
+  }
+  function onPointerUp() {
+    if (dragFromRef.current !== null) onCommit(order.map(keyOf));
+    dragFromRef.current = null;
+    setDragIndex(null);
+  }
+  return { containerRef, order, dragIndex, onPointerDown, onPointerMove, onPointerUp };
+}
+
 export default function Home() {
   const router = useRouter();
   const [tab, setTab] = useState('dashboard');
@@ -62,6 +104,7 @@ export default function Home() {
 
   const [categories, setCategories] = useState([]);
   const [methods, setMethods] = useState([]);
+  const [registrants, setRegistrants] = useState([]);
   const [budgets, setBudgets] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [budgetItems, setBudgetItems] = useState([]);
@@ -69,7 +112,7 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState('');
   const [syncedAt, setSyncedAt] = useState(null);
 
-  const [who, setWho] = useState(WHO[0]);
+  const [who, setWho] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
   const [selectedMethod, setSelectedMethod] = useState('');
   const [date, setDate] = useState(todayISO());
@@ -90,6 +133,9 @@ export default function Home() {
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#7B98AC');
   const [newMethodName, setNewMethodName] = useState('');
+  const [newRegistrantName, setNewRegistrantName] = useState('');
+  const [editingRegistrantId, setEditingRegistrantId] = useState(null);
+  const [editRegistrantName, setEditRegistrantName] = useState('');
   const [sampleNote, setSampleNote] = useState('');
 
   const [newIncomeLabel, setNewIncomeLabel] = useState('');
@@ -112,14 +158,16 @@ export default function Home() {
 
   async function loadCore() {
     try {
-      const [catRes, methodRes, budgetRes] = await Promise.all([
+      const [catRes, methodRes, budgetRes, registrantRes] = await Promise.all([
         api('/api/categories'),
         api('/api/methods'),
-        api('/api/budgets')
+        api('/api/budgets'),
+        api('/api/registrants')
       ]);
       setCategories(catRes.categories || []);
       setMethods((methodRes.methods || []).map((m) => m.name));
       setBudgets(budgetRes.budgets || {});
+      setRegistrants(registrantRes.registrants || []);
       setErrorMsg('');
       setSyncedAt(new Date());
     } catch {
@@ -185,6 +233,12 @@ export default function Home() {
       setSelectedMethod(methods[0]);
     }
   }, [methods, selectedMethod]);
+  const registrantNames = useMemo(() => registrants.map((r) => r.name), [registrants]);
+  useEffect(() => {
+    if (registrantNames.length && !registrantNames.includes(who)) {
+      setWho(registrantNames[0]);
+    }
+  }, [registrantNames, who]);
 
   useEffect(() => {
     if (tab === 'settings') {
@@ -238,6 +292,10 @@ export default function Home() {
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } }, scales: { y: { ticks: { callback: (v) => yen(v) } } } }
     });
   }
+
+  const methodItems = useMemo(() => methods.map((m) => ({ name: m })), [methods]);
+  const categoryDrag = useDragReorder(categories, (c) => c.name, reorderCategories);
+  const methodDrag = useDragReorder(methodItems, (m) => m.name, reorderMethods);
 
   const totalBudget = useMemo(() => categories.reduce((s, c) => s + (Number(budgets[c.name]) || 0), 0), [categories, budgets]);
   const totalSpent = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount), 0), [expenses]);
@@ -293,7 +351,7 @@ export default function Home() {
   }
   function startEditExpense(e) {
     setEditingExpenseId(e.id);
-    setEditDraft({ date: e.date, amount: e.amount, category: e.category, method: e.method, who: e.who || WHO[0], store: e.store || '', memo: e.memo || '' });
+    setEditDraft({ date: e.date, amount: e.amount, category: e.category, method: e.method, who: e.who || registrantNames[0] || '', store: e.store || '', memo: e.memo || '' });
   }
   function cancelEditExpense() { setEditingExpenseId(null); setEditDraft({}); }
   async function saveEditExpense(id) {
@@ -335,6 +393,38 @@ export default function Home() {
     if (methods.length <= 1) return;
     try { await api('/api/methods?name=' + encodeURIComponent(name), { method: 'DELETE' }); await loadCore(); }
     catch { setErrorMsg('支払い方法の削除に失敗しました。'); }
+  }
+  async function reorderCategories(order) {
+    setCategories((prev) => order.map((name) => prev.find((c) => c.name === name)).filter(Boolean));
+    try { await api('/api/categories', { method: 'PATCH', body: JSON.stringify({ order }) }); }
+    catch { setErrorMsg('カテゴリの並び替えの保存に失敗しました。'); await loadCore(); }
+  }
+  async function reorderMethods(order) {
+    setMethods(order);
+    try { await api('/api/methods', { method: 'PATCH', body: JSON.stringify({ order }) }); }
+    catch { setErrorMsg('支払い方法の並び替えの保存に失敗しました。'); await loadCore(); }
+  }
+
+  async function addRegistrant() {
+    if (!newRegistrantName.trim()) return;
+    try { await api('/api/registrants', { method: 'POST', body: JSON.stringify({ name: newRegistrantName.trim() }) }); setNewRegistrantName(''); await loadCore(); }
+    catch { setErrorMsg('登録者の追加に失敗しました。'); }
+  }
+  function startEditRegistrant(r) { setEditingRegistrantId(r.id); setEditRegistrantName(r.name); }
+  function cancelEditRegistrant() { setEditingRegistrantId(null); setEditRegistrantName(''); }
+  async function saveEditRegistrant(id) {
+    if (!editRegistrantName.trim()) return;
+    try {
+      await api('/api/registrants', { method: 'PATCH', body: JSON.stringify({ id, name: editRegistrantName.trim() }) });
+      setEditingRegistrantId(null);
+      await loadCore();
+      await loadExpenses(monthOffset);
+    } catch { setErrorMsg('登録者の更新に失敗しました。'); }
+  }
+  async function deleteRegistrant(name) {
+    if (registrants.length <= 1) return;
+    try { await api('/api/registrants?name=' + encodeURIComponent(name), { method: 'DELETE' }); await loadCore(); }
+    catch { setErrorMsg('登録者の削除に失敗しました。'); }
   }
 
   const BUDGET_ITEM_INPUTS = {
@@ -393,7 +483,7 @@ export default function Home() {
             amount: s.amount,
             category: pick(cats, i).name,
             method: pick(meths, i),
-            who: pick(WHO, i),
+            who: pick(registrantNames.length ? registrantNames : ['自分'], i),
             store: SAMPLE_TAG + s.store,
             memo: s.memo || ''
           })
@@ -574,7 +664,7 @@ export default function Home() {
               <form onSubmit={submitExpense}>
                 <label>入力者</label>
                 <div className="chip-group">
-                  {WHO.map((w) => (<div key={w} className={'chip' + (who === w ? ' selected' : '')} onClick={() => setWho(w)}>{w}</div>))}
+                  {registrantNames.map((w) => (<div key={w} className={'chip' + (who === w ? ' selected' : '')} onClick={() => setWho(w)}>{w}</div>))}
                 </div>
                 <label>日付</label>
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
@@ -670,7 +760,7 @@ export default function Home() {
                     </div>
                     <label style={{ margin: '0 0 4px' }}>入力者</label>
                     <select value={editDraft.who} onChange={(ev) => setEditDraft({ ...editDraft, who: ev.target.value })}>
-                      {WHO.map((w) => (<option key={w} value={w}>{w}</option>))}
+                      {registrantNames.map((w) => (<option key={w} value={w}>{w}</option>))}
                     </select>
                     <label style={{ margin: '8px 0 4px' }}>お店の名前</label>
                     <input type="text" value={editDraft.store} onChange={(ev) => setEditDraft({ ...editDraft, store: ev.target.value })} />
@@ -863,13 +953,16 @@ export default function Home() {
             </div>
 
             <div className="card">
-              <div className="section-title">カテゴリの管理</div>
-              {categories.map((c) => (
-                <div className="manage-row" key={c.name}>
-                  <div className="manage-name"><span className="cat-mark" style={{ background: c.color }} />{c.name}</div>
-                  <button className="manage-del" onClick={() => deleteCategory(c.name)} aria-label="削除">✕</button>
-                </div>
-              ))}
+              <div className="section-title">カテゴリの管理<span className="reorder-hint">⠿を長押しして並び替え</span></div>
+              <div ref={categoryDrag.containerRef}>
+                {categoryDrag.order.map((c, i) => (
+                  <div className={'manage-row' + (categoryDrag.dragIndex === i ? ' dragging' : '')} key={c.name}>
+                    <span className="drag-handle" onPointerDown={(e) => categoryDrag.onPointerDown(e, i)} onPointerMove={categoryDrag.onPointerMove} onPointerUp={categoryDrag.onPointerUp} onPointerCancel={categoryDrag.onPointerUp}>⠿</span>
+                    <div className="manage-name"><span className="cat-mark" style={{ background: c.color }} />{c.name}</div>
+                    <button className="manage-del" onClick={() => deleteCategory(c.name)} aria-label="削除">✕</button>
+                  </div>
+                ))}
+              </div>
               <div className="add-row">
                 <input type="color" value={newCatColor} onChange={(e) => setNewCatColor(e.target.value)} />
                 <input type="text" placeholder="新しいカテゴリ名" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} />
@@ -878,16 +971,40 @@ export default function Home() {
             </div>
 
             <div className="card">
-              <div className="section-title">支払い方法の管理</div>
-              {methods.map((m) => (
-                <div className="manage-row" key={m}>
-                  <div className="manage-name">{m}</div>
-                  <button className="manage-del" onClick={() => deleteMethod(m)} aria-label="削除">✕</button>
-                </div>
-              ))}
+              <div className="section-title">支払い方法の管理<span className="reorder-hint">⠿を長押しして並び替え</span></div>
+              <div ref={methodDrag.containerRef}>
+                {methodDrag.order.map((m, i) => (
+                  <div className={'manage-row' + (methodDrag.dragIndex === i ? ' dragging' : '')} key={m.name}>
+                    <span className="drag-handle" onPointerDown={(e) => methodDrag.onPointerDown(e, i)} onPointerMove={methodDrag.onPointerMove} onPointerUp={methodDrag.onPointerUp} onPointerCancel={methodDrag.onPointerUp}>⠿</span>
+                    <div className="manage-name">{m.name}</div>
+                    <button className="manage-del" onClick={() => deleteMethod(m.name)} aria-label="削除">✕</button>
+                  </div>
+                ))}
+              </div>
               <div className="add-row">
                 <input type="text" placeholder="新しい支払い方法（例：家族カード）" value={newMethodName} onChange={(e) => setNewMethodName(e.target.value)} />
                 <button onClick={addMethod}>追加</button>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="section-title">登録者の管理</div>
+              {registrants.map((r) => editingRegistrantId === r.id ? (
+                <div className="manage-row" key={r.id}>
+                  <input type="text" style={{ flex: 1 }} value={editRegistrantName} onChange={(e) => setEditRegistrantName(e.target.value)} />
+                  <button className="manage-del" onClick={() => saveEditRegistrant(r.id)} aria-label="保存">✓</button>
+                  <button className="manage-del" onClick={cancelEditRegistrant} aria-label="キャンセル">✕</button>
+                </div>
+              ) : (
+                <div className="manage-row" key={r.id}>
+                  <div className="manage-name">{r.name}</div>
+                  <button className="manage-del" onClick={() => startEditRegistrant(r)} aria-label="編集">✎</button>
+                  <button className="manage-del" onClick={() => deleteRegistrant(r.name)} aria-label="削除">✕</button>
+                </div>
+              ))}
+              <div className="add-row">
+                <input type="text" placeholder="新しい登録者名" value={newRegistrantName} onChange={(e) => setNewRegistrantName(e.target.value)} />
+                <button onClick={addRegistrant}>追加</button>
               </div>
             </div>
 

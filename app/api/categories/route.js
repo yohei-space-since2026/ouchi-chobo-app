@@ -35,6 +35,18 @@ export async function POST(request) {
   return NextResponse.json({ category: data });
 }
 
+export async function PATCH(request) {
+  const body = await request.json().catch(() => ({}));
+  const order = body.order;
+  if (!Array.isArray(order) || !order.length) return NextResponse.json({ error: 'order is required' }, { status: 400 });
+  const results = await Promise.all(
+    order.map((name, i) => supabaseAdmin().from('kakeibo_categories').update({ sort_order: i + 1 }).eq('name', name))
+  );
+  const failed = results.find((r) => r.error);
+  if (failed) return NextResponse.json({ error: failed.error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
 export async function DELETE(request) {
   const name = request.nextUrl.searchParams.get('name');
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });

@@ -51,9 +51,8 @@ on conflict (name) do nothing;
 
 insert into kakeibo_methods (name, sort_order) values
   ('現金', 1),
-  ('クレジットカード', 2),
-  ('楽天Pay', 3),
-  ('その他', 4)
+  ('楽天Pay', 2),
+  ('その他', 3)
 on conflict (name) do nothing;
 
 insert into kakeibo_budgets (category_name, amount) values
@@ -94,4 +93,20 @@ alter table kakeibo_budget_items enable row level security;
 alter table kakeibo_budget_items drop constraint if exists kakeibo_budget_items_type_check;
 alter table kakeibo_budget_items add constraint kakeibo_budget_items_type_check
   check (type in ('income','fixed','variable','asset'));
+
+-- ============================================================
+-- 追記（2026-08 update その3）: 登録者マスタ（自分・妻を自由に追加編集削除できるように）
+-- ============================================================
+create table if not exists kakeibo_registrants (
+  id bigint generated always as identity primary key,
+  name text not null unique,
+  sort_order int not null default 0
+);
+alter table kakeibo_registrants enable row level security;
+-- ポリシーは作らない（service_role / secret key だけがRLSをバイパスしてアクセスできる）
+
+insert into kakeibo_registrants (name, sort_order) values
+  ('自分', 1),
+  ('妻', 2)
+on conflict (name) do nothing;
 
