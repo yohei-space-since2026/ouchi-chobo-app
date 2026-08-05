@@ -53,46 +53,64 @@ async function api(path, options) {
 }
 
 // ドラッグ&ドロップ（マウス/タッチ共通のPointer Eventsで実装）で並び替えるための小さなフック
+// pointerdown は掴んだハンドルで受け取るが、move/up は window で拾うことで
+// 指がハンドルの外に出ても（setPointerCaptureが効かない端末でも）確実に追従させる
 function useDragReorder(items, keyOf, onCommit) {
   const containerRef = useRef(null);
   const dragFromRef = useRef(null);
+  const orderRef = useRef(items);
   const [order, setOrder] = useState(items);
   const [dragIndex, setDragIndex] = useState(null);
 
   useEffect(() => { if (dragIndex === null) setOrder(items); }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { orderRef.current = order; }, [order]);
+
+  useEffect(() => {
+    if (dragIndex === null) return undefined;
+
+    function handleMove(e) {
+      if (dragFromRef.current === null || !containerRef.current) return;
+      e.preventDefault();
+      const y = e.clientY;
+      const rows = Array.from(containerRef.current.children);
+      let targetIndex = dragFromRef.current;
+      rows.forEach((row, i) => {
+        const rect = row.getBoundingClientRect();
+        if (y >= rect.top && y <= rect.bottom) targetIndex = i;
+      });
+      if (targetIndex !== dragFromRef.current) {
+        setOrder((prev) => {
+          const next = [...prev];
+          const [moved] = next.splice(dragFromRef.current, 1);
+          next.splice(targetIndex, 0, moved);
+          return next;
+        });
+        dragFromRef.current = targetIndex;
+        setDragIndex(targetIndex);
+      }
+    }
+    function handleUp() {
+      if (dragFromRef.current !== null) onCommit(orderRef.current.map(keyOf));
+      dragFromRef.current = null;
+      setDragIndex(null);
+    }
+    window.addEventListener('pointermove', handleMove, { passive: false });
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragIndex]);
 
   function onPointerDown(e, index) {
     e.preventDefault();
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     dragFromRef.current = index;
     setDragIndex(index);
   }
-  function onPointerMove(e) {
-    if (dragFromRef.current === null || !containerRef.current) return;
-    const rows = Array.from(containerRef.current.children);
-    const y = e.clientY;
-    let targetIndex = dragFromRef.current;
-    rows.forEach((row, i) => {
-      const rect = row.getBoundingClientRect();
-      if (y >= rect.top && y <= rect.bottom) targetIndex = i;
-    });
-    if (targetIndex !== dragFromRef.current) {
-      setOrder((prev) => {
-        const next = [...prev];
-        const [moved] = next.splice(dragFromRef.current, 1);
-        next.splice(targetIndex, 0, moved);
-        return next;
-      });
-      dragFromRef.current = targetIndex;
-      setDragIndex(targetIndex);
-    }
-  }
-  function onPointerUp() {
-    if (dragFromRef.current !== null) onCommit(order.map(keyOf));
-    dragFromRef.current = null;
-    setDragIndex(null);
-  }
-  return { containerRef, order, dragIndex, onPointerDown, onPointerMove, onPointerUp };
+  return { containerRef, order, dragIndex, onPointerDown };
 }
 
 export default function Home() {
@@ -311,6 +329,8 @@ export default function Home() {
   const fixedItems = useMemo(() => budgetItems.filter((i) => i.type === 'fixed'), [budgetItems]);
   const variableItems = useMemo(() => budgetItems.filter((i) => i.type === 'variable'), [budgetItems]);
   const assetItems = useMemo(() => budgetItems.filter((i) => i.type === 'asset'), [budgetItems]);
+  const fixedDrag = useDragReorder(fixedItems, (i) => i.id, (order) => reorderBudgetItems('fixed', order));
+  const variableDrag = useDragReorder(variableItems, (i) => i.id, (order) => reorderBudgetItems('variable', order));
   const incomeTotal = useMemo(() => incomeItems.reduce((s, i) => s + Number(i.amount), 0), [incomeItems]);
   const fixedTotal = useMemo(() => fixedItems.reduce((s, i) => s + Number(i.amount), 0), [fixedItems]);
   const variableTotal = useMemo(() => variableItems.reduce((s, i) => s + Number(i.amount), 0), [variableItems]);
@@ -467,6 +487,15 @@ export default function Home() {
   async function deleteBudgetItem(id) {
     try { await api('/api/budget-items?id=' + id, { method: 'DELETE' }); await loadBudgetItems(monthOffset); }
     catch { setErrorMsg('項目の削除に失敗しました。'); }
+  }
+  async function reorderBudgetItems(type, order) {
+    setBudgetItems((prev) => {
+      const reordered = order.map((id) => prev.find((i) => i.id === id)).filter(Boolean);
+      const others = prev.filter((i) => i.type !== type);
+      return [...others, ...reordered];
+    });
+    try { await api('/api/budget-items', { method: 'PATCH', body: JSON.stringify({ order }) }); }
+    catch { setErrorMsg('並び替えの保存に失敗しました。'); await loadBudgetItems(monthOffset); }
   }
 
   const SAMPLE_TAG = 'サンプル:';
@@ -859,21 +888,24 @@ export default function Home() {
 
               <div className="budget-subheading">固定費<span className="budget-subtotal">{yen(fixedTotal)}</span></div>
               {fixedItems.length === 0 && <div className="empty-state">まだ固定費の記録がありません。</div>}
-              {fixedItems.map((item) => editingBudgetItemId === item.id ? (
-                <div className="manage-row" key={item.id}>
-                  <input type="text" style={{ flex: 1 }} value={editBudgetItemDraft.label} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, label: ev.target.value })} />
-                  <input type="number" style={{ width: 100 }} value={editBudgetItemDraft.amount} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, amount: ev.target.value })} />
-                  <button className="manage-del" onClick={() => saveEditBudgetItem(item.id)} aria-label="保存">✓</button>
-                  <button className="manage-del" onClick={cancelEditBudgetItem} aria-label="キャンセル">✕</button>
-                </div>
-              ) : (
-                <div className="manage-row" key={item.id}>
-                  <div className="manage-name">{item.label}</div>
-                  <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 700 }}>{yen(item.amount)}</div><DeltaTag value={deltaFor(item.amount, item.label, 'fixed')} /></div>
-                  <button className="manage-del" onClick={() => startEditBudgetItem(item)} aria-label="編集">✎</button>
-                  <button className="manage-del" onClick={() => deleteBudgetItem(item.id)} aria-label="削除">✕</button>
-                </div>
-              ))}
+              <div ref={fixedDrag.containerRef}>
+                {fixedDrag.order.map((item, i) => editingBudgetItemId === item.id ? (
+                  <div className="manage-row" key={item.id}>
+                    <input type="text" style={{ flex: 1 }} value={editBudgetItemDraft.label} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, label: ev.target.value })} />
+                    <input type="number" style={{ width: 100 }} value={editBudgetItemDraft.amount} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, amount: ev.target.value })} />
+                    <button className="manage-del" onClick={() => saveEditBudgetItem(item.id)} aria-label="保存">✓</button>
+                    <button className="manage-del" onClick={cancelEditBudgetItem} aria-label="キャンセル">✕</button>
+                  </div>
+                ) : (
+                  <div className={'manage-row' + (fixedDrag.dragIndex === i ? ' dragging' : '')} key={item.id}>
+                    <span className="drag-handle" onPointerDown={(e) => fixedDrag.onPointerDown(e, i)}>⠿</span>
+                    <div className="manage-name">{item.label}</div>
+                    <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 700 }}>{yen(item.amount)}</div><DeltaTag value={deltaFor(item.amount, item.label, 'fixed')} /></div>
+                    <button className="manage-del" onClick={() => startEditBudgetItem(item)} aria-label="編集">✎</button>
+                    <button className="manage-del" onClick={() => deleteBudgetItem(item.id)} aria-label="削除">✕</button>
+                  </div>
+                ))}
+              </div>
               <div className="add-row">
                 <input type="text" placeholder="例）家賃・保険" value={newFixedLabel} onChange={(e) => setNewFixedLabel(e.target.value)} style={{ flex: 2 }} />
                 <input type="number" placeholder="金額" value={newFixedAmount} onChange={(e) => setNewFixedAmount(e.target.value)} style={{ flex: 1 }} />
@@ -882,21 +914,24 @@ export default function Home() {
 
               <div className="budget-subheading" style={{ marginTop: 16 }}>変動費<span className="budget-subtotal">{yen(variableTotal)}</span></div>
               {variableItems.length === 0 && <div className="empty-state">まだ変動費の記録がありません。</div>}
-              {variableItems.map((item) => editingBudgetItemId === item.id ? (
-                <div className="manage-row" key={item.id}>
-                  <input type="text" style={{ flex: 1 }} value={editBudgetItemDraft.label} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, label: ev.target.value })} />
-                  <input type="number" style={{ width: 100 }} value={editBudgetItemDraft.amount} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, amount: ev.target.value })} />
-                  <button className="manage-del" onClick={() => saveEditBudgetItem(item.id)} aria-label="保存">✓</button>
-                  <button className="manage-del" onClick={cancelEditBudgetItem} aria-label="キャンセル">✕</button>
-                </div>
-              ) : (
-                <div className="manage-row" key={item.id}>
-                  <div className="manage-name">{item.label}</div>
-                  <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 700 }}>{yen(item.amount)}</div><DeltaTag value={deltaFor(item.amount, item.label, 'variable')} /></div>
-                  <button className="manage-del" onClick={() => startEditBudgetItem(item)} aria-label="編集">✎</button>
-                  <button className="manage-del" onClick={() => deleteBudgetItem(item.id)} aria-label="削除">✕</button>
-                </div>
-              ))}
+              <div ref={variableDrag.containerRef}>
+                {variableDrag.order.map((item, i) => editingBudgetItemId === item.id ? (
+                  <div className="manage-row" key={item.id}>
+                    <input type="text" style={{ flex: 1 }} value={editBudgetItemDraft.label} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, label: ev.target.value })} />
+                    <input type="number" style={{ width: 100 }} value={editBudgetItemDraft.amount} onChange={(ev) => setEditBudgetItemDraft({ ...editBudgetItemDraft, amount: ev.target.value })} />
+                    <button className="manage-del" onClick={() => saveEditBudgetItem(item.id)} aria-label="保存">✓</button>
+                    <button className="manage-del" onClick={cancelEditBudgetItem} aria-label="キャンセル">✕</button>
+                  </div>
+                ) : (
+                  <div className={'manage-row' + (variableDrag.dragIndex === i ? ' dragging' : '')} key={item.id}>
+                    <span className="drag-handle" onPointerDown={(e) => variableDrag.onPointerDown(e, i)}>⠿</span>
+                    <div className="manage-name">{item.label}</div>
+                    <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 700 }}>{yen(item.amount)}</div><DeltaTag value={deltaFor(item.amount, item.label, 'variable')} /></div>
+                    <button className="manage-del" onClick={() => startEditBudgetItem(item)} aria-label="編集">✎</button>
+                    <button className="manage-del" onClick={() => deleteBudgetItem(item.id)} aria-label="削除">✕</button>
+                  </div>
+                ))}
+              </div>
               <div className="add-row">
                 <input type="text" placeholder="例）現金おろした分・カード引き落とし" value={newVariableLabel} onChange={(e) => setNewVariableLabel(e.target.value)} style={{ flex: 2 }} />
                 <input type="number" placeholder="金額" value={newVariableAmount} onChange={(e) => setNewVariableAmount(e.target.value)} style={{ flex: 1 }} />
@@ -982,7 +1017,7 @@ export default function Home() {
               <div ref={categoryDrag.containerRef}>
                 {categoryDrag.order.map((c, i) => (
                   <div className={'manage-row' + (categoryDrag.dragIndex === i ? ' dragging' : '')} key={c.name}>
-                    <span className="drag-handle" onPointerDown={(e) => categoryDrag.onPointerDown(e, i)} onPointerMove={categoryDrag.onPointerMove} onPointerUp={categoryDrag.onPointerUp} onPointerCancel={categoryDrag.onPointerUp}>⠿</span>
+                    <span className="drag-handle" onPointerDown={(e) => categoryDrag.onPointerDown(e, i)}>⠿</span>
                     <div className="manage-name"><span className="cat-mark" style={{ background: c.color }} />{c.name}</div>
                     <button className="manage-del" onClick={() => deleteCategory(c.name)} aria-label="削除">✕</button>
                   </div>
@@ -1000,7 +1035,7 @@ export default function Home() {
               <div ref={methodDrag.containerRef}>
                 {methodDrag.order.map((m, i) => (
                   <div className={'manage-row' + (methodDrag.dragIndex === i ? ' dragging' : '')} key={m.name}>
-                    <span className="drag-handle" onPointerDown={(e) => methodDrag.onPointerDown(e, i)} onPointerMove={methodDrag.onPointerMove} onPointerUp={methodDrag.onPointerUp} onPointerCancel={methodDrag.onPointerUp}>⠿</span>
+                    <span className="drag-handle" onPointerDown={(e) => methodDrag.onPointerDown(e, i)}>⠿</span>
                     <div className="manage-name">{m.name}</div>
                     <button className="manage-del" onClick={() => deleteMethod(m.name)} aria-label="削除">✕</button>
                   </div>

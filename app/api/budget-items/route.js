@@ -90,6 +90,17 @@ export async function POST(request) {
 
 export async function PATCH(request) {
   const body = await request.json().catch(() => ({}));
+
+  // 並び替え（{order: [id, id, ...]}）
+  if (Array.isArray(body.order)) {
+    const results = await Promise.all(
+      body.order.map((id, i) => supabaseAdmin().from('kakeibo_budget_items').update({ sort_order: i + 1 }).eq('id', id))
+    );
+    const failed = results.find((r) => r.error);
+    if (failed) return NextResponse.json({ error: failed.error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
   const { id, label, amount } = body;
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
   const update = {};
